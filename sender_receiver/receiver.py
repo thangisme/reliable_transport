@@ -98,77 +98,31 @@ def receiver(receiver_port, window_size):
                         file=sys.stderr,
                     )
 
-                    # Buffer out-of-order packets
-                    if pkt_header.seq_num > expected_seq_num:
-                        print(
-                            f"Out-of-order packet {pkt_header.seq_num}, buffering",
-                            file=sys.stderr,
-                        )
-                        received_data[pkt_header.seq_num] = msg
-
-                        # Still end cumulative ACK for the last in-order packet received
-                        ack_header = PacketHeader(
-                            type=3, seq_num=expected_seq_num, length=0
-                        )
-                        ack_packet = bytes(ack_header)
-                        checksum = compute_checksum(ack_packet)
-                        ack_header.checksum = checksum
-                        ack_packet = bytes(ack_header)
-
-                        s.sendto(ack_packet, address)
-                        print(
-                            f"Sent cumulative ACK for {expected_seq_num - 1}",
-                            file=sys.stderr,
-                        )
+                    # Check if packet is duplicated (already processed)
+                    if pkt_header.seq_num < expected_seq_num:
+                        print(f"Duplicate DATA packet {pkt_header.seq_num} ignored", file=sys.stderr)
                     elif pkt_header.seq_num == expected_seq_num:
-                        # In-order packet, process it
                         sys.stdout.buffer.write(msg)
-                        sys.stdout.flush()  # Ensure data is written immediately
-
+                        sys.stdout.flush()
                         expected_seq_num += 1
-
-                        # Check if we can process any buffered packets
+                        # Processs any buffered next packets in order
                         while expected_seq_num in received_data:
                             sys.stdout.buffer.write(received_data[expected_seq_num])
+                            sys.stdout.flush()
                             del received_data[expected_seq_num]
                             expected_seq_num += 1
+                    else:
+                        # For out-of-order, only buffer if not already
+                        if pkt_header.seq_num not in received_data:
+                            received_data[pkt_header.seq_num] = msg
 
-                        # Send cumulative ACK
-                        ack_header = PacketHeader(
-                            type=3, seq_num=expected_seq_num, length=0
-                        )
-                        ack_packet = bytes(ack_header)
-                        checksum = compute_checksum(ack_packet)
-                        ack_header.checksum = checksum
-                        ack_packet = bytes(ack_header)
-
-                        s.sendto(ack_packet, address)
-                        print(
-                            f"Processed packets up to {expected_seq_num - 1}, sent ACK {expected_seq_num}",
-                            file=sys.stderr,
-                        )
-
-                    # Ignore duplicate packets (seq_num < expected_seq_num)
-                    # But still send ACK to handle potential lost ACKS
-                    elif pkt_header.seq_num < expected_seq_num:
-                        print(
-                            f"Duplicated packet {pkt_header.seq_num}, ignoring",
-                            file=sys.stderr,
-                        )
-
-                        ack_header = PacketHeader(
-                            type=3, seq_num=expected_seq_num, length=0
-                        )
-                        ack_packet = bytes(ack_header)
-                        checksum = compute_checksum(ack_packet)
-                        ack_header.checksum = checksum
-                        ack_packet = bytes(ack_header)
-
-                        s.sendto(ack_packet, address)
-                        print(
-                            f"Resent ACK {expected_seq_num} for duplicate packets",
-                            file=sys.stderr,
-                        )
+                    ack_header = PacketHeader(type=3, seq_num=pkt_header.seq_num, length=0)
+                    ack_packet = bytes(ack_header)
+                    checksum = compute_checksum(ack_packet)
+                    ack_header.checksum = checksum
+                    ack_packet = bytes(ack_header)
+                    s.sendto(ack_packet, address)
+                    print(f"Sent indiviual ACK for packet {pkt_header.seq_num}", file=sys.stderr)
 
             except socket.timeout:
                 if not connection_active:

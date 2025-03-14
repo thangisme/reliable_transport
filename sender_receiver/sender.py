@@ -87,6 +87,8 @@ def sender(receiver_ip, receiver_port, window_size):
     timer_start = 0
     timeout_duration = 0.5
 
+    acknowledged = {} # For tracking if a seq_num is ACKed
+    
     # Continue until all packets are acknowledged
     while base <= len(chunks):
         # Send new packets that fit within the window
@@ -109,6 +111,9 @@ def sender(receiver_ip, receiver_port, window_size):
             # Store packet in buffer for potential retransmission
             buffer[next_seq_num] = packet
 
+            # Mark this packet as unknowledged initially
+            acknowledged[next_seq_num] = False
+
             # Send the packet
             s.sendto(packet, (receiver_ip, receiver_port))
             print(f"Sent DATA packet {next_seq_num}")
@@ -130,22 +135,16 @@ def sender(receiver_ip, receiver_port, window_size):
 
             # Check if it's an ACK
             if header.type == 3:
-                print(f"Received ACK {header.seq_num}")
+                print(f"Received individual ACK for packet {header.seq_num}")
 
-                # Move the window if this ACK is for a packet we haven't acknowledged yet
-                if header.seq_num > base:
-                    # Update base (fist unacknowledged packet)
-                    base = header.seq_num
+                seq_ack = header.seq_num
+                acknowledged[seq_ack] = True
 
-                    # If all sent packets are acknowledged, stop the timer
-                    if base == next_seq_num:
-                        timer_active = False
-                    else:
-                        # Otherwise restart the timer for the next unacknowledged packet
-                        timer_start = time.time()
-
+                # Update base if the lowest ACKed packet has move forward
+                while base in acknowledged and acknowledged[base]:
+                    base += 1
         except BlockingIOError:
-            # No data available to receive, this is expected with non-blocking socket
+            # No data available to receive
             pass
 
         if timer_active and (time.time() - timer_start > timeout_duration):
@@ -153,7 +152,7 @@ def sender(receiver_ip, receiver_port, window_size):
 
             # Resend all unacknowledged packets in the window
             for seq in range(base, next_seq_num):
-                if seq in buffer:
+                if seq in acknowledged and not acknowledged[seq]:
                     s.sendto(buffer[seq], (receiver_ip, receiver_port))
                     print(f"Resent DATA packet {seq}")
 
@@ -182,7 +181,7 @@ def sender(receiver_ip, receiver_port, window_size):
     end_time = time.time()
     end_acked = False
 
-    while end_acked and time.time() - end_time < 0.5:
+    while not end_acked and time.time() - end_time < 0.5:
         try:
             data, addr = s.recvfrom(1472)
             header = PacketHeader(data)
@@ -197,7 +196,7 @@ def sender(receiver_ip, receiver_port, window_size):
             print("Timeout waiting for END ACK, resending ...")
             s.sendto(end_packet, (receiver_ip, receiver_port))
 
-    s.close
+    s.close()
 
 
 def main():

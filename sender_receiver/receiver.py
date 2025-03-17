@@ -111,6 +111,9 @@ def receiver(receiver_port, window_size):
                             sys.stdout.flush()
                             del received_data[expected_seq_num]
                             expected_seq_num += 1
+                    elif pkt_header.seq_num >= expected_seq_num + window_size:
+                        print(f"Dropped packet {pkt_header.seq_num} outside window")
+                        continue
                     else:
                         # For out-of-order, only buffer if not already
                         if pkt_header.seq_num not in received_data:

@@ -1,7 +1,3 @@
-###############################################################################
-# sender.py
-###############################################################################
-
 import sys
 import socket
 import time
@@ -15,7 +11,7 @@ def sender(receiver_ip, receiver_port, window_size):
 
     # Read the message from stdin
     message = sys.stdin.buffer.read()
-    print(f"Read {len(message)} bytes from stdin...")
+    print_debug(f"Read {len(message)} bytes from stdin...")
 
     # --- Conection establishment (START phase) ---
     # Create a START packet with type=0, seq_num=0
@@ -25,16 +21,11 @@ def sender(receiver_ip, receiver_port, window_size):
     start_header = PacketHeader(type=0, seq_num=seq_num, length=0)
 
     # Create the packet(header only, no data)
-    start_packet = bytes(start_header)
-
-    # Calculate checksum and update header
-    checksum = compute_checksum(start_packet)
-    start_header.checksum = checksum
-    start_packet = bytes(start_header)
+    start_packet = build_packet(start_header)
 
     # Send the START packet
     s.sendto(start_packet, (receiver_ip, receiver_port))
-    print(f"Send START packet")
+    print_debug(f"Send START packet")
 
     # Wait for acknowledgment (ACK) from receiver
     s.settimeout(0.5)
@@ -53,13 +44,13 @@ def sender(receiver_ip, receiver_port, window_size):
             if (
                 header.type == 3 and header.seq_num == 1
             ):  # ACK with seq_num=1 means START was received
-                print("Connection established!")
+                print_debug("Connection established!")
                 start_acked = True
                 seq_num = 1  # Next packet will be seq_num=1
 
         except socket.timeout:
             # If tiemout occurs, resend the START packet
-            print("Timeout waiting for START ACK, resending ...")
+            print_debug("Timeout waiting for START ACK, resending ...")
             s.sendto(start_packet, (receiver_ip, receiver_port))
 
     # --- Data transfer phase ---
@@ -70,7 +61,7 @@ def sender(receiver_ip, receiver_port, window_size):
     for i in range(0, len(message), MAX_DATA_SIZE):
         chunks.append(message[i : i + MAX_DATA_SIZE])
 
-    print(f"Message split into {len(chunks)} chunks")
+    print_debug(f"Message split into {len(chunks)} chunks")
 
     # Set up sliding iwndow parameters
     base = 1  # First unacknowledged packet
@@ -99,14 +90,7 @@ def sender(receiver_ip, receiver_port, window_size):
 
             # Create DATA packet header
             header = PacketHeader(type=2, seq_num=next_seq_num, length=len(data))
-
-            # Combine header and data
-            packet = bytes(header) + data
-
-            # Calculate and update checksum
-            checksum = compute_checksum(packet)
-            header.checksum = checksum
-            packet = bytes(header) + data
+            packet = build_packet(header, data)
 
             # Store packet in buffer for potential retransmission
             buffer[next_seq_num] = packet
@@ -116,7 +100,7 @@ def sender(receiver_ip, receiver_port, window_size):
 
             # Send the packet
             s.sendto(packet, (receiver_ip, receiver_port))
-            print(f"Sent DATA packet {next_seq_num}")
+            print_debug(f"Sent DATA packet {next_seq_num}")
 
             # Start timer if this is the first packet in the window
             if not timer_active:
@@ -135,7 +119,7 @@ def sender(receiver_ip, receiver_port, window_size):
 
             # Check if it's an ACK
             if header.type == 3:
-                print(f"Received individual ACK for packet {header.seq_num}")
+                print_debug(f"Received individual ACK for packet {header.seq_num}")
 
                 seq_ack = header.seq_num
                 acknowledged[seq_ack] = True
@@ -148,13 +132,13 @@ def sender(receiver_ip, receiver_port, window_size):
             pass
 
         if timer_active and (time.time() - timer_start > timeout_duration):
-            print("Timeout occured, resending unacknowledges packets")
+            print_debug("Timeout occured, resending unacknowledges packets")
 
             # Resend all unacknowledged packets in the window
             for seq in range(base, next_seq_num):
                 if seq in acknowledged and not acknowledged[seq]:
                     s.sendto(buffer[seq], (receiver_ip, receiver_port))
-                    print(f"Resent DATA packet {seq}")
+                    print_debug(f"Resent DATA packet {seq}")
 
             # Reset timer
             timer_start = time.time()
@@ -162,12 +146,7 @@ def sender(receiver_ip, receiver_port, window_size):
     # --- Connection termination (END phase)
     # Create END packet (type=1)
     end_header = PacketHeader(type=1, seq_num=next_seq_num, length=0)
-    end_packet = bytes(end_header)
-
-    # Calculate and update checksum
-    checksum = compute_checksum(end_packet)
-    end_header.checksum = checksum
-    end_packet = bytes(end_header)
+    end_packet = build_packet(end_header)
 
     # Switch back to blocking socket with timeout
     s.setblocking(True)
@@ -175,7 +154,7 @@ def sender(receiver_ip, receiver_port, window_size):
 
     # Send END packet
     s.sendto(end_packet, (receiver_ip, receiver_port))
-    print(f"Sent END packet with seq_num {next_seq_num}")
+    print_debug(f"Sent END packet with seq_num {next_seq_num}")
 
     # Wait for ACK for END packet or timeout after 500ms
     end_time = time.time()
@@ -188,12 +167,12 @@ def sender(receiver_ip, receiver_port, window_size):
 
             # Check if it's an ACK for our END packet
             if header.type == 3 and header.seq_num == next_seq_num + 1:
-                print("Received ACK for End packet, connection terminatited")
+                print_debug("Received ACK for End packet, connection terminatited")
                 end_acked = True
                 break
         except socket.timeout:
             # Resend END packet
-            print("Timeout waiting for END ACK, resending ...")
+            print_debug("Timeout waiting for END ACK, resending ...")
             s.sendto(end_packet, (receiver_ip, receiver_port))
 
     s.close()

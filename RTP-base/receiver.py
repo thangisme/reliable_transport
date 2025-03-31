@@ -1,7 +1,3 @@
-###############################################################################
-# receiver.py
-###############################################################################
-
 import sys
 import socket
 
@@ -21,7 +17,6 @@ def receiver(receiver_port, window_size):
 
     # Initialize
     expected_seq_num = 1  # First data packet should have seq_num=1
-    received_data = {}  # Buffer for out-of-order packets
     connection_active = False
     sender_address = None
 
@@ -64,11 +59,7 @@ def receiver(receiver_port, window_size):
                     connection_active = True
 
                     # Send ACK for START
-                    ack_header = PacketHeader(type=3, seq_num=1, length=0)
-                    ack_packet = bytes(ack_header)
-                    checksum = compute_checksum(ack_packet)
-                    ack_header.checksum = checksum
-                    ack_packet = bytes(ack_header)
+                    ack_packet = create_ack(1)
 
                     s.sendto(ack_packet, address)
                     print("Sent ACK for START", file=sys.stderr)
@@ -78,13 +69,7 @@ def receiver(receiver_port, window_size):
                         file=sys.stderr,
                     )
                     # Send ACK for END
-                    ack_header = PacketHeader(
-                        type=3, seq_num=pkt_header.seq_num + 1, length=0
-                    )
-                    ack_packet = bytes(ack_header)
-                    checksum = compute_checksum(ack_packet)
-                    ack_header.checksum = checksum
-                    ack_packet = bytes(ack_header)
+                    ack_packet = create_ack(pkt_header.seq_num + 1)
 
                     s.sendto(ack_packet, address)
                     print("Sent ACK for END, terminating conneciton", file=sys.stderr)
@@ -94,79 +79,31 @@ def receiver(receiver_port, window_size):
                 elif pkt_header.type == 2:  # DATA
                     msg = pkt[16 : 16 + pkt_header.length]
                     print(
-                        f"Received DATA packet {pkt_header.seq_num}, size: {pkt_header.length}",
+                        f"Received DATA packet {pkt_header.seq_num}, size: {pkt_header.length}, expecting {expected_seq_num}",
                         file=sys.stderr,
                     )
 
-                    # Buffer out-of-order packets
-                    if pkt_header.seq_num > expected_seq_num:
-                        print(
-                            f"Out-of-order packet {pkt_header.seq_num}, buffering",
-                            file=sys.stderr,
-                        )
-                        received_data[pkt_header.seq_num] = msg
-
-                        # Still end cumulative ACK for the last in-order packet received
-                        ack_header = PacketHeader(
-                            type=3, seq_num=expected_seq_num, length=0
-                        )
-                        ack_packet = bytes(ack_header)
-                        checksum = compute_checksum(ack_packet)
-                        ack_header.checksum = checksum
-                        ack_packet = bytes(ack_header)
-
-                        s.sendto(ack_packet, address)
-                        print(
-                            f"Sent cumulative ACK for {expected_seq_num - 1}",
-                            file=sys.stderr,
-                        )
-                    elif pkt_header.seq_num == expected_seq_num:
+                    if pkt_header.seq_num == expected_seq_num:
                         # In-order packet, process it
                         sys.stdout.buffer.write(msg)
                         sys.stdout.flush()  # Ensure data is written immediately
 
                         expected_seq_num += 1
 
-                        # Check if we can process any buffered packets
-                        while expected_seq_num in received_data:
-                            sys.stdout.buffer.write(received_data[expected_seq_num])
-                            del received_data[expected_seq_num]
-                            expected_seq_num += 1
-
-                        # Send cumulative ACK
-                        ack_header = PacketHeader(
-                            type=3, seq_num=expected_seq_num, length=0
-                        )
-                        ack_packet = bytes(ack_header)
-                        checksum = compute_checksum(ack_packet)
-                        ack_header.checksum = checksum
-                        ack_packet = bytes(ack_header)
+                        ack_packet = create_ack(expected_seq_num)
 
                         s.sendto(ack_packet, address)
                         print(
                             f"Processed packets up to {expected_seq_num - 1}, sent ACK {expected_seq_num}",
                             file=sys.stderr,
                         )
-
-                    # Ignore duplicate packets (seq_num < expected_seq_num)
-                    # But still send ACK to handle potential lost ACKS
-                    elif pkt_header.seq_num < expected_seq_num:
-                        print(
-                            f"Duplicated packet {pkt_header.seq_num}, ignoring",
-                            file=sys.stderr,
-                        )
-
-                        ack_header = PacketHeader(
-                            type=3, seq_num=expected_seq_num, length=0
-                        )
-                        ack_packet = bytes(ack_header)
-                        checksum = compute_checksum(ack_packet)
-                        ack_header.checksum = checksum
-                        ack_packet = bytes(ack_header)
+                    else:
+                        print(f"Discarded packet {pkt_header.seq_num}", file=sys.stderr)
+                        ack_packet = create_ack(expected_seq_num)
 
                         s.sendto(ack_packet, address)
                         print(
-                            f"Resent ACK {expected_seq_num} for duplicate packets",
+                            f"Resent ACK {expected_seq_num} due to unexpected packet {pkt_header.seq_num}",
                             file=sys.stderr,
                         )
 

@@ -16,12 +16,13 @@ def receiver(receiver_port, window_size):
     expected_seq_num = 1  # First data packet should have seq_num=1
     received_data = {}  # Buffer for out-of-order packets
     connection_active = False
+    sender_address = True
 
     try:
         while True:
             try:
                 # Receive packet
-                pkt, address = s.recvfrom(2048)
+                pkt, address = s.recvfrom(1472)
 
                 # Extract header
                 pkt_header = PacketHeader(pkt[:16])
@@ -47,17 +48,24 @@ def receiver(receiver_port, window_size):
 
                 # Handle packet based ob type
                 if pkt_header.type == 0:  # START
-                    print_debug("Received START packet")
+                    print_debug(f"Received START packet from {address}")
 
                     # Set the expected sequence number for the first data packet
                     expected_seq_num = 1
-                    connection_active = True
+                    if not connection_active:
+                        connection_active = True
+                        sender_address = address
+                        print(f"Connection activated with sender {sender_address}", file=sys.stderr)
+                        
+                        # Send ACK for START
+                        ack_packet = create_ack(1)
 
-                    # Send ACK for START
-                    ack_packet = create_ack(1)
+                        s.sendto(ack_packet, address)
+                        print_debug(f"Sent ACK for START to {sender_address}")
 
-                    s.sendto(ack_packet, address)
-                    print_debug("Sent ACK for START")
+                    else:
+                        print_debug(f"Ignored START from {address} while in connection with {sender_address}")
+
                 elif pkt_header.type == 1:  # End
                     print_debug(
                         f"Received END packet with seq_num {pkt_header.seq_num}",
@@ -65,7 +73,7 @@ def receiver(receiver_port, window_size):
                     # Send ACK for END
                     ack_packet = create_ack(pkt_header.seq_num + 1)
 
-                    s.sendto(ack_packet, address)
+                    s.sendto(ack_packet, sender_address)
                     print_debug("Sent ACK for END, terminating conneciton")
 
                     connection_active = False
@@ -102,14 +110,16 @@ def receiver(receiver_port, window_size):
                             received_data[pkt_header.seq_num] = msg
 
                     ack_packet = create_ack(pkt_header.seq_num)
-                    s.sendto(ack_packet, address)
+                    s.sendto(ack_packet, sender_address)
                     print_debug(f"Sent indiviual ACK for packet {pkt_header.seq_num}")
 
             except socket.timeout:
                 if not connection_active:
                     print_debug("Socket timeout while waiting for initial conneciton")
                     break
-                print_debug("Socket timeout - no packet received for 30 seconds")
+                else:
+                    print_debug("Socket timeout - no packet received for 30 seconds, terminating")
+                    break
     except KeyboardInterrupt:
         print_debug("Receiver interrupted by user")
     finally:

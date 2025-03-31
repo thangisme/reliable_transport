@@ -1,7 +1,3 @@
-###############################################################################
-# sender.py
-###############################################################################
-
 import sys
 import socket
 import time
@@ -143,6 +139,7 @@ def sender(receiver_ip, receiver_port, window_size):
                     else:
                         # Otherwise restart the timer for the next unacknowledged packet
                         timer_start = time.time()
+                        timer_active = True
 
         except BlockingIOError:
             # No data available to receive, this is expected with non-blocking socket
@@ -162,7 +159,8 @@ def sender(receiver_ip, receiver_port, window_size):
 
     # --- Connection termination (END phase)
     # Create END packet (type=1)
-    end_header = PacketHeader(type=1, seq_num=next_seq_num, length=0)
+    end_seq_num = len(chunks) + 1
+    end_header = PacketHeader(type=1, seq_num=end_seq_num, length=0)
     end_packet = bytes(end_header)
 
     # Calculate and update checksum
@@ -176,7 +174,7 @@ def sender(receiver_ip, receiver_port, window_size):
 
     # Send END packet
     s.sendto(end_packet, (receiver_ip, receiver_port))
-    print(f"Sent END packet with seq_num {next_seq_num}")
+    print(f"Sent END packet with seq_num {end_seq_num}")
 
     # Wait for ACK for END packet or timeout after 500ms
     end_time = time.time()
@@ -193,10 +191,10 @@ def sender(receiver_ip, receiver_port, window_size):
                 end_acked = True
                 break
         except socket.timeout:
-            # Resend END packet
-            print("Timeout waiting for END ACK, resending ...")
-            s.sendto(end_packet, (receiver_ip, receiver_port))
+            pass
 
+    if not end_acked:
+        print(f"ACK for END timed out, terminating")
     s.close()
 
 

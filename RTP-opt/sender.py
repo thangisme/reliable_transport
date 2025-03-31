@@ -171,10 +171,10 @@ def sender(receiver_ip, receiver_port, window_size):
                 end_acked = True
                 break
         except socket.timeout:
-            # Resend END packet
-            print_debug("Timeout waiting for END ACK, resending ...")
-            s.sendto(end_packet, (receiver_ip, receiver_port))
-
+            pass
+        
+    if not end_acked:
+        print(f"ACK for END timed out, terminating")
     s.close()
 
 
